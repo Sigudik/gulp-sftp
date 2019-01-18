@@ -166,7 +166,7 @@ module.exports = function (options) {
             } else {
                 gutil.log('Connection :: closed');
             }
-            
+
         });
 
 
@@ -224,6 +224,7 @@ module.exports = function (options) {
                 .map(function(d){return d.replace(/^\/~/,"~");})
                 .map(normalizePath);
 
+
             if(dirname.search(/^\//) === 0){
                 fileDirs = fileDirs.map(function(dir){
                     if(dir.search(/^\//) === 0){
@@ -234,36 +235,45 @@ module.exports = function (options) {
             }
 
             //get filter out dirs that are closer to root than the base remote path
-            //also filter out any dirs made during this gulp session
+            //also filter out any dirs already made made during this gulp session
             fileDirs = fileDirs.filter(function(d){return d.length>=remotePath.length&&!mkDirCache[d];});
 
-            //while there are dirs to create, create them
-            //https://github.com/caolan/async#whilst - not the most commonly used async control flow
+            var fileMissinDirs = [];
+
+            //while folders that are needed but do not exist
             async.whilst(function(){
                 return fileDirs && fileDirs.length;
             },function(next){
                 var d= fileDirs.pop();
+
                 mkDirCache[d]=true;
-                //mdrake - TODO: use a default file permission instead of defaulting to 755
                 if(remotePlatform && remotePlatform.toLowerCase().indexOf('win')!==-1) {
                     d = d.replace('/','\\');
                 }
                 sftp.exists(d, function(exist) {
                     if (!exist) {
-                        sftp.mkdir(d, {mode: '0755'}, function(err){//REMOTE PATH
-                            if(err){
-                                gutil.log('SFTP Mkdir Error:', gutil.colors.red(err + " " +d));
-                            }else{
-                                gutil.log('SFTP Created:', gutil.colors.green(d));
-                            }
-                            next();
-                        });
+                        fileDirs.push(d.substring(0, d.lastIndexOf("/") ));
+                        fileMissinDirs.push(d);
+                        next();
                     } else {
                         next();
                     }
                 });
-                
             },function(){
+
+                // while there are folders to create, create them
+
+                while (fileMissinDirs.length > 0) {
+                    var tbc = fileMissinDirs.pop();
+                    sftp.mkdir(tbc, {mode: '0755'}, function(err){//REMOTE PATH
+                        if(err){
+                            gutil.log('Error:', gutil.colors.red(tbc));
+                        }
+                    });
+                    gutil.log('SFTP Created Folder:', gutil.colors.green(tbc));
+                }
+
+                //file upload settings
 
                 var stream = sftp.createWriteStream(finalRemotePath,{//REMOTE PATH
                     flags: 'w',
@@ -280,7 +290,7 @@ module.exports = function (options) {
                 var highWaterMark = stream.highWaterMark||(16*1000);
                 var size = file.stat.size;
 
-                // start upload
+                // start file upload
                 if (file.isStream()) {
                     file.contents.pipe(stream);
                 } else if (file.isBuffer()) {
@@ -291,7 +301,7 @@ module.exports = function (options) {
                     uploadedBytes+=highWaterMark;
                     var p = Math.round((uploadedBytes/size)*100);
                     p = Math.min(100,p);
-                    gutil.log('gulp-sftp:',finalRemotePath,"uploaded",(uploadedBytes/1000)+"kb");
+                    gutil.log('SFTP:',finalRemotePath,"uploaded",(uploadedBytes/1000)+"kb");
                 });
 
 
